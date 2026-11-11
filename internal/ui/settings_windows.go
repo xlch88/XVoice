@@ -8,6 +8,7 @@ import (
 	"golang.org/x/sys/windows"
 
 	"xvoice/internal/config"
+	"xvoice/internal/desktop"
 )
 
 // The settings window: the form from settingsFields on the left, rendered by
@@ -46,6 +47,7 @@ var (
 		sync.Mutex
 		choices map[int][]config.Choice
 		text    string
+		hotkey  string
 		level   float64
 		status  string
 		running bool
@@ -82,6 +84,10 @@ func createSettings() {
 			rows[i].heading = child("STATIC", f.section, 0, 0, 0)
 		}
 		rows[i].label = child("STATIC", f.label, 0, 0, 0)
+		if f.hotkey {
+			rows[i].combo = child("BUTTON", desktop.HotkeyName(*f.value(&cfg)), wsTabStop, 0, idField+i)
+			continue
+		}
 		rows[i].combo = child("COMBOBOX", "", 0x3|wsVScroll|wsTabStop, 0, idField+i) // CBS_DROPDOWNLIST
 		send(rows[i].combo, 0x1701, 16, 0)                                           // CB_SETMINVISIBLE: rows listed before scrolling
 		fill(i, f.choices)
@@ -120,7 +126,11 @@ func layoutSettings() {
 			y += 28
 		}
 		place(r.label, 20, y+4, 96, 22, settingsFonts.text)
-		place(r.combo, 120, y, 250, 400, settingsFonts.text) // Height is that of the open list.
+		height := 400 // Of the open list.
+		if form[i].hotkey {
+			height = 28
+		}
+		place(r.combo, 120, y, 250, height, settingsFonts.text)
 		y += 34
 	}
 	place(footnote, 20, y+4, 350, 20, settingsFonts.text)
@@ -184,6 +194,62 @@ func reloadChoices() {
 			}
 		}()
 	}
+}
+
+// recording is the index of the hotkey field waiting for a key combination.
+var recording = -1
+
+// recordHotkey makes field i's button wait for the next key combination;
+// clicking it again gives up.
+func recordHotkey(i int) {
+	if recording >= 0 {
+		cancelRecording()
+		return
+	}
+	recording = i
+	setCaption(rows[i].combo, "请按下新的快捷键（Esc 取消）")
+	desktop.CaptureHotkey(func(value string) {
+		shared.Lock()
+		shared.hotkey = value
+		shared.Unlock()
+		postMessage.Call(mainWnd, wmHotkey, 0, 0)
+	})
+}
+
+func cancelRecording() {
+	if recording >= 0 {
+		desktop.CaptureHotkey(nil)
+		shared.Lock()
+		shared.hotkey = ""
+		shared.Unlock()
+		hotkeyRecorded()
+	}
+}
+
+// hotkeyRecorded stores what recordHotkey captured; "" keeps the old hotkey.
+func hotkeyRecorded() {
+	if recording < 0 {
+		return
+	}
+	i := recording
+	recording = -1
+	shared.Lock()
+	value := shared.hotkey
+	shared.Unlock()
+	if value != "" {
+		*form[i].value(&cfg) = value
+		changed()
+	}
+	setCaption(rows[i].combo, desktop.HotkeyName(*form[i].value(&cfg)))
+}
+
+// changed publishes cfg after an edit.
+func changed() {
+	refreshEnabled()
+	opts.OnChange(cfg)
+	// Both show the hotkey.
+	tray(1) // NIM_MODIFY
+	invalidateRect.Call(barWnd, 0, 0)
 }
 
 func choicesLoaded(i int) {
@@ -274,19 +340,21 @@ func settingsProc(hwnd, message, wParam, lParam uintptr) uintptr {
 			} else {
 				startTest()
 			}
+		case id >= idField && id < idField+len(form) && form[id-idField].hotkey:
+			if code == 0 { // BN_CLICKED
+				recordHotkey(id - idField)
+			}
 		case id >= idField && id < idField+len(form) && code == 1: // CBN_SELCHANGE
 			i := id - idField
 			*form[i].value(&cfg) = rows[i].shown[int(send(rows[i].combo, 0x147, 0, 0))].Value // CB_GETCURSEL
-			refreshEnabled()
-			opts.OnChange(cfg)
-			// Both show the hotkey.
-			tray(1) // NIM_MODIFY
-			invalidateRect.Call(barWnd, 0, 0)
+			changed()
 		}
 		return 0
 	case wmActivate:
 		if wParam&0xffff != 0 {
 			reloadChoices()
+		} else {
+			cancelRecording()
 		}
 	case wmDPIChanged:
 		settingsDPI = int(hiword(wParam))

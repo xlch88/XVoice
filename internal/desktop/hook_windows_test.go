@@ -20,10 +20,4 @@ func TestParseHotkey(t *testing.T) {
 			t.Errorf("parseHotkey(%q) = %#x, want failure", value, got)
 		}
 	}
-	// Every offered choice must parse.
-	for _, h := range Hotkeys {
-		if _, ok := parseHotkey(h.Value); !ok {
-			t.Errorf("offered hotkey %q does not parse", h.Value)
-		}
-	}
 }

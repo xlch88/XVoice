@@ -25,7 +25,7 @@ type Config struct {
 	Typing      string `json:"typing,omitempty"`      // session.Typings
 	Punctuation string `json:"punctuation,omitempty"` // session.Punctuations
 	AutoStop    string `json:"auto_stop,omitempty"`   // session.AutoStops
-	Hotkey      string `json:"hotkey,omitempty"`      // desktop.Hotkeys
+	Hotkey      string `json:"hotkey,omitempty"`      // e.g. "ctrl+alt+space"; see desktop.SetHotkey
 	Sound       string `json:"sound,omitempty"`       // "" plays chimes, "off" is silent.
 	Autostart   string `json:"autostart,omitempty"`   // "on" launches at sign-in.
 }

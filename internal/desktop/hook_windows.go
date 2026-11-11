@@ -88,6 +88,52 @@ func parseHotkey(value string) (c uint32, ok bool) {
 	return c, c&0xff != 0
 }
 
+// capture, while set, receives the next key combination in place of the
+// normal hotkey handling.
+var capture atomic.Pointer[func(string)]
+
+// CaptureHotkey calls done once with the next key combination the user
+// presses, in SetHotkey's form, or with "" if they press Esc. Combinations a
+// hotkey cannot use (a bare letter, Shift plus a letter) are ignored. Passing
+// nil stops waiting.
+func CaptureHotkey(done func(value string)) {
+	if done == nil {
+		capture.Store(nil)
+		return
+	}
+	capture.Store(&done)
+}
+
+// heldChord names the combination of the held modifiers and key vk, or
+// returns "" if it would not make a usable hotkey.
+func heldChord(vk uint32) string {
+	var key string
+	switch {
+	case vk == 0x20:
+		key = "space"
+	case vk >= '0' && vk <= '9' || vk >= 'A' && vk <= 'Z':
+		key = strings.ToLower(string(rune(vk)))
+	case vk >= 0x70 && vk <= 0x87:
+		key = "f" + strconv.Itoa(int(vk-0x70)+1)
+	default:
+		return ""
+	}
+	win := held[vkLWin] || held[vkRWin]
+	if vk < 0x70 && !held[vkCtrl] && !held[vkAlt] && !win {
+		return "" // Would swallow ordinary typing.
+	}
+	value := ""
+	for _, m := range []struct {
+		held bool
+		name string
+	}{{held[vkCtrl], "ctrl+"}, {held[vkAlt], "alt+"}, {held[vkShift], "shift+"}, {win, "win+"}} {
+		if m.held {
+			value += m.name
+		}
+	}
+	return value + key
+}
+
 type keyboardEvent struct {
 	VK, Scan, Flags, Time uint32
 	Extra                 uintptr
@@ -163,6 +209,17 @@ var keyboardCallback = syscall.NewCallback(func(code, message uintptr, event *ke
 			return 1
 		}
 		return next(code, message, event)
+	}
+	if done := capture.Load(); done != nil {
+		if vk == vkCtrl || vk == vkAlt || vk == vkShift || vk == vkLWin || vk == vkRWin {
+			return next(code, message, event)
+		}
+		swallowed = vk
+		if value := heldChord(vk); value != "" || vk == 0x1b { // Esc cancels
+			capture.Store(nil)
+			go (*done)(value)
+		}
+		return 1
 	}
 	if t := current(); t != nil {
 		stopIf(t, "检测到键盘输入")

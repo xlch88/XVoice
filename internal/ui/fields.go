@@ -4,7 +4,6 @@ import (
 	"xvoice/internal/asr"
 	"xvoice/internal/audio"
 	"xvoice/internal/config"
-	"xvoice/internal/desktop"
 	"xvoice/internal/session"
 )
 
@@ -13,6 +12,7 @@ import (
 // never touches platform code.
 type field struct {
 	section string // Heading shown above this row.
+	hotkey  bool   // A button that records a key combination, instead of a list.
 	label   string
 	choices []config.Choice
 	// load fetches choices that are slow to get or change at runtime; it runs
@@ -67,7 +67,7 @@ func settingsFields(devices func() ([]audio.Device, error)) []field {
 		{section: "输入", label: "上屏方式", choices: session.Typings, value: func(c *config.Config) *string { return &c.Typing }},
 		{label: "标点", choices: session.Punctuations, value: func(c *config.Config) *string { return &c.Punctuation }},
 		{label: "自动结束", choices: session.AutoStops, value: func(c *config.Config) *string { return &c.AutoStop }},
-		{section: "常规", label: "快捷键", choices: desktop.Hotkeys, value: func(c *config.Config) *string { return &c.Hotkey }},
+		{section: "常规", label: "快捷键", hotkey: true, value: func(c *config.Config) *string { return &c.Hotkey }},
 		{
 			label:   "提示音",
 			choices: []config.Choice{{Name: "开启"}, {Value: "off", Name: "关闭"}},

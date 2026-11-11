@@ -1,15 +1,15 @@
 // Package desktop locks onto the focused text field of another application,
 // types text into it and owns the global start/stop hotkey.
 //
-// Every platform implements Start, SetHotkey, Acquire, SetAutostart and Close
+// Every platform implements Start, SetHotkey, CaptureHotkey, Acquire,
+// SetAutostart and Close
 // in a build-tagged file.
 package desktop
 
 import (
 	"errors"
 	"image"
-
-	"xvoice/internal/config"
+	"strings"
 )
 
 var ErrUnsupported = errors.New("当前平台尚未实现外部输入框写入")
@@ -28,22 +28,22 @@ type Target interface {
 	Release()
 }
 
-// Hotkeys are the start/stop chords offered in settings. A config file may
-// hold any other chord of the same form, such as "ctrl+shift+f12".
-var Hotkeys = []config.Choice{
-	{Value: "", Name: "Ctrl + Alt + 空格"},
-	{Value: "ctrl+alt+h", Name: "Ctrl + Alt + H"},
-	{Value: "ctrl+shift+h", Name: "Ctrl + Shift + H"},
-	{Value: "win+alt+h", Name: "Win + Alt + H"},
-	{Value: "f9", Name: "F9"},
-}
-
-// HotkeyName is how a hotkey value is shown to the user.
+// HotkeyName is how a hotkey value such as "ctrl+alt+space" is shown to the
+// user. The empty value is the default hotkey.
 func HotkeyName(value string) string {
-	for _, h := range Hotkeys {
-		if h.Value == value {
-			return h.Name
+	if value == "" {
+		value = "ctrl+alt+space"
+	}
+	parts := strings.Split(value, "+")
+	for i, part := range parts {
+		switch part {
+		case "ctrl", "alt", "shift", "win":
+			parts[i] = strings.ToUpper(part[:1]) + part[1:]
+		case "space":
+			parts[i] = "空格"
+		default:
+			parts[i] = strings.ToUpper(part)
 		}
 	}
-	return value
+	return strings.Join(parts, " + ")
 }
