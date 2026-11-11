@@ -19,6 +19,8 @@ var (
 	setWinEvent    = user32.NewProc("SetWinEventHook")
 	unhookWinEvent = user32.NewProc("UnhookWinEvent")
 	getMessage     = user32.NewProc("GetMessageW")
+	getAsyncKey    = user32.NewProc("GetAsyncKeyState")
+	setTimer       = user32.NewProc("SetTimer")
 )
 
 const (
@@ -197,7 +199,7 @@ var keyboardCallback = syscall.NewCallback(func(code, message uintptr, event *ke
 		if swallow {
 			swallowed = 0
 		}
-		if !anyHeld() {
+		if !anyHeld(vk) {
 			interrupted = false
 			if pendingStart {
 				pendingStart = false
@@ -210,6 +212,7 @@ var keyboardCallback = syscall.NewCallback(func(code, message uintptr, event *ke
 		}
 		return next(code, message, event)
 	}
+	anyHeld(vk) // Drop stale modifiers before they are compared with the hotkey.
 	if done := capture.Load(); done != nil {
 		if vk == vkCtrl || vk == vkAlt || vk == vkShift || vk == vkLWin || vk == vkRWin {
 			return next(code, message, event)
@@ -244,13 +247,21 @@ var keyboardCallback = syscall.NewCallback(func(code, message uintptr, event *ke
 	return next(code, message, event)
 })
 
-func anyHeld() bool {
-	for _, h := range held {
-		if h {
-			return true
+// anyHeld reports whether a key other than current, the one this event is
+// about, is still down. Key-ups never arrive when another desktop takes the
+// keyboard mid-press (lock screen, UAC prompt, Ctrl+Alt+Del), so every key
+// believed held is confirmed with the system; otherwise one stale entry
+// would keep the hotkey from ever firing again.
+func anyHeld(current uint32) bool {
+	any := false
+	for vk := range held {
+		if held[vk] && uint32(vk) != current {
+			state, _, _ := getAsyncKey.Call(uintptr(vk))
+			held[vk] = state&0x8000 != 0
+			any = any || held[vk]
 		}
 	}
-	return false
+	return any
 }
 
 func next(code, message uintptr, event *keyboardEvent) uintptr {
@@ -299,10 +310,25 @@ func runHooks(onHotkey func(), ready chan<- error) {
 		return
 	}
 	ready <- nil
-	var msg [48]byte // MSG
+	// Windows silently removes a low-level hook whose callback once failed
+	// to answer in time (a stalled machine, a resume from sleep), and nothing
+	// reports it. Reinstalling every minute bounds how long the hotkey can
+	// be dead; the state above lives outside the hook and survives.
+	setTimer.Call(0, 0, 60_000, 0)
+	var m struct {
+		window  uintptr
+		message uint32
+		_       [36]byte
+	}
 	for {
-		if r, _, _ := getMessage.Call(uintptr(unsafe.Pointer(&msg[0])), 0, 0, 0); int32(r) <= 0 {
+		if r, _, _ := getMessage.Call(uintptr(unsafe.Pointer(&m)), 0, 0, 0); int32(r) <= 0 {
 			return
+		}
+		if m.message == 0x113 { // WM_TIMER
+			if fresh, _, _ := setWindowsHook.Call(13, keyboardCallback, module, 0); fresh != 0 {
+				unhookWindows.Call(keyboard)
+				keyboard = fresh
+			}
 		}
 	}
 }

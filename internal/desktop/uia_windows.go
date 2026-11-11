@@ -3,9 +3,6 @@ package desktop
 import (
 	"image"
 	"math"
-	"slices"
-	"sync/atomic"
-	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -16,16 +13,12 @@ import (
 var (
 	clsidAutomation = windows.GUID{Data1: 0xff48dba4, Data2: 0x60ef, Data3: 0x4201, Data4: [8]byte{0xaa, 0x87, 0x54, 0x10, 0x3e, 0xef, 0x59, 0x4e}}
 	iidAutomation   = windows.GUID{Data1: 0x30cbe57d, Data2: 0xd9d0, Data3: 0x452a, Data4: [8]byte{0xab, 0x13, 0x7a, 0xc5, 0xac, 0x48, 0x25, 0xee}}
-	iidUnknown      = windows.GUID{Data4: [8]byte{0xc0, 0, 0, 0, 0, 0, 0, 0x46}}
-	iidFocusHandler = windows.GUID{Data1: 0xc270f6b5, Data2: 0x5c69, Data3: 0x4290, Data4: [8]byte{0x97, 0x45, 0x7a, 0x7f, 0x97, 0x16, 0x94, 0x68}}
 )
 
 // vtable slots
 const (
 	autoFocused       = 8  // IUIAutomation::GetFocusedElement
 	autoControlWalker = 14 // ::get_ControlViewWalker
-	autoAddFocus      = 39 // ::AddFocusChangedEventHandler
-	autoRemoveFocus   = 40 // ::RemoveFocusChangedEventHandler
 	elemRuntimeID     = 4  // IUIAutomationElement::GetRuntimeId
 	elemPattern       = 16 // ::GetCurrentPattern
 	elemProcessID     = 20 // ::get_CurrentProcessId
@@ -202,52 +195,17 @@ func caretRect(editor *winapi.Object) (image.Rectangle, bool) {
 	return image.Rect(int(r.Left), int(r.Top), int(r.Right), int(r.Bottom)), true
 }
 
-// focusHandler is a hand-built IUIAutomationFocusChangedEventHandler. UIA may
-// call it after removal, so the single instance lives in a global forever.
-type focusHandler struct {
-	vtable *[4]uintptr
-	refs   atomic.Int32
-}
-
-var focusVtable = [4]uintptr{
-	syscall.NewCallback(func(h *focusHandler, iid *windows.GUID, out *unsafe.Pointer) uintptr {
-		if *iid == iidUnknown || *iid == iidFocusHandler {
-			*out = unsafe.Pointer(h)
-			h.refs.Add(1)
-			return 0
-		}
-		*out = nil
-		return 0x80004002 // E_NOINTERFACE
-	}),
-	syscall.NewCallback(func(h *focusHandler) uintptr { return uintptr(h.refs.Add(1)) }),
-	syscall.NewCallback(func(h *focusHandler) uintptr { return uintptr(h.refs.Add(-1)) }),
-	syscall.NewCallback(func(h *focusHandler, sender *winapi.Object) uintptr {
-		if t := current(); t != nil && !slices.Equal(editorID(sender), t.id) {
-			stopIf(t, "输入框已切换")
-		}
-		return 0
-	}),
-}
-
-var handler = &focusHandler{vtable: &focusVtable}
-
+// uiaInit creates the automation client. It deliberately subscribes to no
+// events: a focus-changed subscription makes every application on the machine
+// keep its accessibility tree live for as long as this program runs. While a
+// target is locked it is polled instead (see Start).
 func uiaInit() error {
 	var err error
-	if engine, err = winapi.Create(&clsidAutomation, &iidAutomation); err != nil {
-		return err
-	}
-	if hr := engine.Call(autoAddFocus, 0, uintptr(unsafe.Pointer(handler))); winapi.Failed(hr) {
-		engine.Release()
-		engine = nil
-		return winapi.HRError("订阅焦点变化", hr)
-	}
-	return nil
+	engine, err = winapi.Create(&clsidAutomation, &iidAutomation)
+	return err
 }
 
 func uiaClose() {
-	if engine != nil {
-		engine.Call(autoRemoveFocus, uintptr(unsafe.Pointer(handler)))
-		engine.Release()
-		engine = nil
-	}
+	engine.Release()
+	engine = nil
 }

@@ -352,8 +352,10 @@ func settingsProc(hwnd, message, wParam, lParam uintptr) uintptr {
 			}
 		case id >= idField && id < idField+len(form) && code == 1: // CBN_SELCHANGE
 			i := id - idField
-			*form[i].value(&cfg) = rows[i].shown[int(send(rows[i].combo, 0x147, 0, 0))].Value // CB_GETCURSEL
-			changed()
+			if selected := int(int32(send(rows[i].combo, 0x147, 0, 0))); selected >= 0 && selected < len(rows[i].shown) { // CB_GETCURSEL
+				*form[i].value(&cfg) = rows[i].shown[selected].Value
+				changed()
+			}
 		}
 		return 0
 	case wmActivate:
