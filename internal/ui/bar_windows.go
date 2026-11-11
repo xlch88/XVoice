@@ -300,12 +300,15 @@ func barProc(hwnd, message, wParam, lParam uintptr) uintptr {
 		switch hit {
 		case hitMic:
 			go opts.Toggle()
-		case hitSettings:
-			showSettings()
-		case hitClose:
+		case hitSettings, hitClose:
+			// Both end the dictation and put the bar away; opening settings
+			// would take the focus from the text field anyway.
 			barClosed = barState.Phase != session.Idle
 			go opts.Stop()
 			showWindow.Call(hwnd, swHide)
+			if hit == hitSettings {
+				showSettings()
+			}
 		}
 		return 0
 	case wmTimer:
