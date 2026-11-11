@@ -1,0 +1,4 @@
+# Keep sources byte-identical on every platform; gofmt expects LF.
+* text=auto eol=lf
+*.png binary
+*.syso binary

@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <title>语音输入</title>
+  <desc>蓝色圆角方形中，一枚融合声波与文字光标的白色对话气泡。</desc>
+  <defs>
+    <linearGradient id="background" x1="56" y1="24" x2="456" y2="488" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2587FF"/>
+      <stop offset="1" stop-color="#1947D2"/>
+    </linearGradient>
+    <linearGradient id="voice" x1="152" y1="184" x2="316" y2="306" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#21BCD9"/>
+      <stop offset="1" stop-color="#2463EB"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="112" ry="112" fill="url(#background)"/>
+  <path d="M92 221C92 147.546 151.546 88 225 88H287C360.454 88 420 147.546 420 221V259C420 332.454 360.454 392 287 392H222L140 434V361.5C110.484 337.086 92 300.229 92 259V221Z" fill="#1037A7" fill-opacity=".18" transform="translate(0 8)"/>
+  <path d="M92 213C92 139.546 151.546 80 225 80H287C360.454 80 420 139.546 420 213V251C420 324.454 360.454 384 287 384H222L140 426V353.5C110.484 329.086 92 292.229 92 251V213Z" fill="white"/>
+  <g stroke="url(#voice)" stroke-width="22" stroke-linecap="round">
+    <path d="M160 218V250"/>
+    <path d="M202 187V281"/>
+    <path d="M244 161V307"/>
+    <path d="M286 199V269"/>
+  </g>
+  <path d="M339 181V287M326 181H352M326 287H352" stroke="#2463EB" stroke-width="12" stroke-linecap="round"/>
+</svg>
