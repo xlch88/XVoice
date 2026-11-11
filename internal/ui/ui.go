@@ -9,7 +9,11 @@ import (
 	"xvoice/internal/config"
 )
 
+// aboutURL is the project page the About entries open.
+const aboutURL = "https://github.com/xlch88/XVoice"
+
 type Options struct {
+	Version  string // Shown in the About entries.
 	Config   config.Config
 	OnChange func(config.Config) // A setting changed; called on the UI thread.
 	Toggle   func()              // Start dictation into the focused field, or finish it.

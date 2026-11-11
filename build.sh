@@ -16,7 +16,7 @@ go vet ./...
 mkdir -p dist
 for target in $targets; do
 	os="${target%/*}" arch="${target#*/}"
-	output="dist/xvoice-$os-$arch-$version" flags="-s -w"
+	output="dist/xvoice-$os-$arch-$version" flags="-s -w -X main.version=$version"
 	if [ "$os" = windows ]; then
 		output+=".exe"
 		flags+=" -H windowsgui" # No console window.

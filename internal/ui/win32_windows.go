@@ -89,6 +89,7 @@ var (
 	bitBlt             = gdi32.NewProc("BitBlt")
 	deleteDC           = gdi32.NewProc("DeleteDC")
 	notifyIcon         = shell32.NewProc("Shell_NotifyIconW")
+	shellExecute       = shell32.NewProc("ShellExecuteW")
 	getModuleHandle    = kernel32.NewProc("GetModuleHandleW")
 	createMutex        = kernel32.NewProc("CreateMutexW")
 	dwmSetAttribute    = dwmapi.NewProc("DwmSetWindowAttribute")
@@ -350,14 +351,21 @@ func tray(action uintptr) {
 const (
 	menuBar = iota + 1
 	menuSettings
+	menuAbout
 	menuExit
 )
+
+// openAbout opens the project page in the default browser.
+func openAbout() {
+	shellExecute.Call(0, uintptr(unsafe.Pointer(str("open"))), uintptr(unsafe.Pointer(str(aboutURL))), 0, 0, 1) // SW_SHOWNORMAL
+}
 
 func trayMenu() {
 	menu, _, _ := createPopupMenu.Call()
 	defer destroyMenu.Call(menu)
 	appendMenu.Call(menu, 0, menuBar, uintptr(unsafe.Pointer(str("显示语音条"))))
 	appendMenu.Call(menu, 0, menuSettings, uintptr(unsafe.Pointer(str("设置…"))))
+	appendMenu.Call(menu, 0, menuAbout, uintptr(unsafe.Pointer(str("关于 XVoice "+opts.Version))))
 	appendMenu.Call(menu, 0x800, 0, 0) // MF_SEPARATOR
 	appendMenu.Call(menu, 0, menuExit, uintptr(unsafe.Pointer(str("退出"))))
 	var p point
@@ -371,6 +379,8 @@ func trayMenu() {
 		showBarIdle()
 	case menuSettings:
 		showSettings()
+	case menuAbout:
+		openAbout()
 	case menuExit:
 		destroyWindow.Call(mainWnd)
 	}

@@ -21,6 +21,9 @@ import (
 	"xvoice/internal/ui"
 )
 
+// version is set by build.sh.
+var version = "dev"
+
 func main() {
 	if !ui.SingleInstance() {
 		return
@@ -46,7 +49,8 @@ func main() {
 		desktop.SetAutostart(true) // The executable may have moved since it was registered.
 	}
 	err := ui.Run(ui.Options{
-		Config: cfg,
+		Version: version,
+		Config:  cfg,
 		OnChange: func(next config.Config) {
 			mu.Lock()
 			previous := cfg

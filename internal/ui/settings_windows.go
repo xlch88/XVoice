@@ -16,6 +16,7 @@ import (
 
 const (
 	idTest  = 90
+	idAbout = 91
 	idField = 100 // Plus the field's index.
 
 	settingsStyle = wsCaption | wsSysMenu | wsMinimizeBox
@@ -34,6 +35,7 @@ var (
 	form          []field
 	rows          []row
 	footnote      uintptr
+	aboutButton   uintptr
 	divider       uintptr
 	testHeading   uintptr
 	testButton    uintptr
@@ -93,6 +95,7 @@ func createSettings() {
 		fill(i, f.choices)
 	}
 	footnote = child("STATIC", "更改立即保存，从下一次听写开始生效。", 0, 0, 0)
+	aboutButton = child("BUTTON", "关于 "+opts.Version, wsTabStop, 0, idAbout)
 	divider = child("STATIC", "", 0x11, 0, 0) // SS_ETCHEDVERT
 	testHeading = child("STATIC", "测试", 0, 0, 0)
 	testButton = child("BUTTON", "开始测试", wsTabStop, 0, idTest)
@@ -133,7 +136,8 @@ func layoutSettings() {
 		place(r.combo, 120, y, 250, height, settingsFonts.text)
 		y += 34
 	}
-	place(footnote, 20, y+4, 350, 20, settingsFonts.text)
+	place(footnote, 20, y+4, 250, 20, settingsFonts.text)
+	place(aboutButton, 274, y, 96, 28, settingsFonts.text)
 	bottom := y + 36
 	place(divider, 387, 14, 2, bottom-28, settingsFonts.text)
 	place(testHeading, 404, 14, 336, 22, settingsFonts.bold)
@@ -334,6 +338,8 @@ func settingsProc(hwnd, message, wParam, lParam uintptr) uintptr {
 	case wmCommand:
 		id, code := int(wParam&0xffff), wParam>>16
 		switch {
+		case id == idAbout:
+			openAbout()
 		case id == idTest:
 			if testCancel != nil {
 				stopTest()
