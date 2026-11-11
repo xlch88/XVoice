@@ -17,7 +17,7 @@
 
 ## 使用
 
-1. 运行 `xvoice.exe`，程序驻留在托盘。
+1. 运行 `dist` 里构建出的 exe，程序驻留在托盘。
 2. 点一下任意应用的输入框，按 `Ctrl + Alt + 空格` 开始说话。
 3. 再按一次快捷键、按任意键，或者切换到别的输入框，听写立刻停止。
 
@@ -49,9 +49,11 @@
 
 需要 Go 1.24 或更新版本，不需要 C 编译器。
 
-```powershell
-./build.ps1
+```bash
+./build.sh
 ```
+
+产物在 `dist` 目录，文件名是 `xvoice-<系统>-<架构>-<版本>`，例如 `xvoice-windows-amd64-v1.0.0.exe`。版本默认取自 git（最近的标签，没有标签时是提交号），也可以作为参数传入：`./build.sh v1.0.0`。默认构建 Windows 的 amd64 和 arm64，用环境变量 `TARGETS` 可以改，例如 `TARGETS="windows/amd64" ./build.sh`。Windows 上在 Git Bash 里运行。
 
 图标和 Windows 清单（控件样式、按显示器缩放）已经编译成 `cmd/xvoice/rsrc_windows_*.syso` 放在仓库里，普通构建不需要额外工具。更换 `assets/logo.svg` 之后重新生成：
 
