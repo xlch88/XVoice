@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
-	"xvoice/internal/asr"
-	"xvoice/internal/audio"
-	"xvoice/internal/config"
-	"xvoice/internal/desktop"
+	"github.com/xlch88/XVoice/internal/asr"
+	"github.com/xlch88/XVoice/internal/audio"
+	"github.com/xlch88/XVoice/internal/config"
+	"github.com/xlch88/XVoice/internal/desktop"
 )
 
 type Phase int

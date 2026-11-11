@@ -1,10 +1,10 @@
 package ui
 
 import (
-	"xvoice/internal/asr"
-	"xvoice/internal/audio"
-	"xvoice/internal/config"
-	"xvoice/internal/session"
+	"github.com/xlch88/XVoice/internal/asr"
+	"github.com/xlch88/XVoice/internal/audio"
+	"github.com/xlch88/XVoice/internal/config"
+	"github.com/xlch88/XVoice/internal/session"
 )
 
 // field is one row of the settings form: a label and a drop-down list. Every

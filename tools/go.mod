@@ -1,4 +1,4 @@
-module xvoice/tools
+module github.com/xlch88/XVoice/tools
 
 go 1.24
 

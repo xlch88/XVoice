@@ -7,8 +7,8 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"xvoice/internal/desktop"
-	"xvoice/internal/session"
+	"github.com/xlch88/XVoice/internal/desktop"
+	"github.com/xlch88/XVoice/internal/session"
 )
 
 // The floating bar never takes focus (WS_EX_NOACTIVATE + MA_NOACTIVATE), so

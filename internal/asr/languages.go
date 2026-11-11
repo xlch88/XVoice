@@ -3,7 +3,7 @@ package asr
 import (
 	"time"
 
-	"xvoice/internal/config"
+	"github.com/xlch88/XVoice/internal/config"
 )
 
 // Languages are the recognition models offered in settings, named as in the

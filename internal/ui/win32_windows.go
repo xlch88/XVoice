@@ -9,9 +9,9 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"xvoice/internal/config"
-	"xvoice/internal/desktop"
-	"xvoice/internal/session"
+	"github.com/xlch88/XVoice/internal/config"
+	"github.com/xlch88/XVoice/internal/desktop"
+	"github.com/xlch88/XVoice/internal/session"
 )
 
 var (

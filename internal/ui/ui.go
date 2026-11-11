@@ -5,8 +5,8 @@ package ui
 import (
 	"context"
 
-	"xvoice/internal/audio"
-	"xvoice/internal/config"
+	"github.com/xlch88/XVoice/internal/audio"
+	"github.com/xlch88/XVoice/internal/config"
 )
 
 // aboutURL is the project page the About entries open.

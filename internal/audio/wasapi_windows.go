@@ -10,7 +10,7 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"xvoice/internal/winapi"
+	"github.com/xlch88/XVoice/internal/winapi"
 )
 
 var (

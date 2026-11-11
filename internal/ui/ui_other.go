@@ -5,7 +5,7 @@ package ui
 import (
 	"errors"
 
-	"xvoice/internal/session"
+	"github.com/xlch88/XVoice/internal/session"
 )
 
 func SingleInstance() bool { return true }

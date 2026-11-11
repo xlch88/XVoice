@@ -3,8 +3,8 @@ package session
 import (
 	"strings"
 
-	"xvoice/internal/config"
-	"xvoice/internal/desktop"
+	"github.com/xlch88/XVoice/internal/config"
+	"github.com/xlch88/XVoice/internal/desktop"
 )
 
 const (

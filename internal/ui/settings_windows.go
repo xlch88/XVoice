@@ -7,8 +7,8 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"xvoice/internal/config"
-	"xvoice/internal/desktop"
+	"github.com/xlch88/XVoice/internal/config"
+	"github.com/xlch88/XVoice/internal/desktop"
 )
 
 // The settings window: the form from settingsFields on the left, rendered by
