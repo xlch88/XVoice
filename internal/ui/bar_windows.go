@@ -34,6 +34,7 @@ var (
 	barText    string // Last transcript; survives the dictation ending.
 	barHover   int
 	barPressed int
+	barClosed  bool // The user closed the bar mid-dictation; stay hidden until it has ended.
 	barFonts   struct{ status, text, icon uintptr }
 )
 
@@ -143,6 +144,11 @@ func applyState(s session.State) {
 		barText = session.Format(s.Text, cfg.Punctuation)
 	}
 	barState = s
+	if barClosed {
+		// The dictation being aborted still reports its last states.
+		barClosed = s.Phase != session.Idle
+		return
+	}
 	if s.Phase == session.Idle {
 		// Also surfaces "focus is not a text field" when nothing started.
 		if !visible(barWnd) {
@@ -297,6 +303,7 @@ func barProc(hwnd, message, wParam, lParam uintptr) uintptr {
 		case hitSettings:
 			showSettings()
 		case hitClose:
+			barClosed = barState.Phase != session.Idle
 			go opts.Stop()
 			showWindow.Call(hwnd, swHide)
 		}

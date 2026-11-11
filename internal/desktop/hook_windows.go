@@ -201,8 +201,22 @@ func next(code, message uintptr, event *keyboardEvent) uintptr {
 	return r
 }
 
-var foregroundCallback = syscall.NewCallback(func(_ uintptr, _ uint32, window uintptr, _, _ int32, _, _ uint32) uintptr {
-	if t := current(); t != nil && window != t.window {
+// The event only prompts a look at the real foreground window. Its own window
+// argument is not trustworthy: apps report helper windows (a UWP CoreWindow
+// under its frame, accessibility windows created on the first UI Automation
+// query), and events queued before the target was locked arrive late.
+var foregroundCallback = syscall.NewCallback(func(_ uintptr, _ uint32, _ uintptr, _, _ int32, _, _ uint32) uintptr {
+	t := current()
+	if t == nil {
+		return 0
+	}
+	foreground, _, _ := getForeground.Call()
+	if foreground == 0 || foreground == t.window {
+		return 0 // Zero is a transition in progress; the next event settles it.
+	}
+	var process uint32
+	getThreadProcess.Call(foreground, uintptr(unsafe.Pointer(&process)))
+	if process != windows.GetCurrentProcessId() {
 		stopIf(t, "窗口已切换")
 	}
 	return 0
