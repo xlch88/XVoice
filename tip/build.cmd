@@ -10,6 +10,6 @@ cd /d "%~dp0"
 for %%a in (x64 x86) do (
 	if not exist obj\%%a mkdir obj\%%a
 	rem /Brepro: the same source gives the same bytes, so the installed version only changes with the code.
-	cmd /c ""%VS%\VC\Auxiliary\Build\vcvarsall.bat" %%a >nul && cl /nologo /Brepro /O2 /W4 /EHsc /MT /utf-8 /DUNICODE /D_UNICODE /LD /Foobj\%%a\ xvoice_tip.cpp /link /Brepro /DEF:xvoice_tip.def /IMPLIB:obj\%%a\xvoice_tip.lib ole32.lib uuid.lib user32.lib advapi32.lib /OUT:obj\%%a\xvoice_tip.dll" || exit /b 1
+	cmd /c ""%VS%\VC\Auxiliary\Build\vcvarsall.bat" %%a >nul && cl /nologo /Brepro /O2 /W4 /EHsc /MT /utf-8 /DUNICODE /D_UNICODE /LD /Foobj\%%a\ xvoice_tip.cpp /link /Brepro /DEF:xvoice_tip.def /IMPLIB:obj\%%a\xvoice_tip.lib ole32.lib oleaut32.lib uuid.lib user32.lib advapi32.lib /OUT:obj\%%a\xvoice_tip.dll" || exit /b 1
 	copy /y obj\%%a\xvoice_tip.dll ..\internal\tip\xvoice_tip_%%a.dll >nul || exit /b 1
 )

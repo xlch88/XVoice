@@ -4,16 +4,13 @@ import (
 	"errors"
 	"image"
 	"runtime"
-	"slices"
 	"sync"
-	"sync/atomic"
 	"time"
-	"unicode/utf16"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 
-	"github.com/xlch88/XVoice/internal/winapi"
+	"github.com/xlch88/XVoice/internal/tip"
 )
 
 var (
@@ -22,32 +19,31 @@ var (
 	getThreadProcess  = user32.NewProc("GetWindowThreadProcessId")
 	getGUIThreadInfo  = user32.NewProc("GetGUIThreadInfo")
 	clientToScreen    = user32.NewProc("ClientToScreen")
-	sendInput         = user32.NewProc("SendInput")
 	postThreadMessage = user32.NewProc("PostThreadMessageW")
 )
 
+// target is a text field reached through the XVoice text service, which
+// edits it as a composition on the application's UI thread.
 type target struct {
-	token    uint64
-	id       []int32 // Runtime ID of the verified field; nil tracks only window.
 	window   uintptr
-	tip      uintptr // Text service window that edits the field; 0 types with SendInput.
-	tipState uintptr // Its QUERY answer when acquired; any change means the focus moved.
-	composed []rune  // The composition so far, when tip is set.
+	tip      uintptr // Text service window on the thread that owns the focus.
+	state    uintptr // Its QUERY answer when acquired; any change means the focus moved.
+	composed []rune  // The composition so far.
 	anchor   image.Rectangle
 	anchored bool
 	done     chan struct{}
 	reason   string // Written once under mu before done closes.
 }
 
-// All UI Automation calls run on one MTA thread fed through jobs. The active
-// target and its generation are shared with hook callbacks, which only stop.
+// Text service calls run on one worker fed through jobs, which also polls the
+// active target. The active target is shared with hook callbacks, which only
+// stop it.
 var (
 	jobs       = make(chan func())
 	quit       chan struct{}
 	finished   sync.WaitGroup
 	mu         sync.Mutex
 	active     *target
-	generation atomic.Uint64
 	hookThread uint32
 )
 
@@ -65,14 +61,13 @@ func stopIf(t *target, reason string) {
 		return
 	}
 	active = nil
-	generation.Add(1)
 	t.reason = reason
 	close(t.done)
 }
 
 func stopActive(reason string) { stopIf(current(), reason) }
 
-// do runs f on the UIA worker and waits for it.
+// do runs f on the worker and waits for it.
 func do(f func()) {
 	done := make(chan struct{})
 	jobs <- func() {
@@ -82,28 +77,15 @@ func do(f func()) {
 	<-done
 }
 
-// Start initialises UI Automation and the global keyboard hook. onHotkey runs
-// on its own goroutine after the hotkey chord is fully released.
+// Start runs the worker and the global keyboard hook. onHotkey runs on its own
+// goroutine after the hotkey chord is fully released.
 func Start(hotkey string, onHotkey func()) error {
 	SetHotkey(hotkey)
 	quit = make(chan struct{})
-	ready := make(chan error, 2)
+	ready := make(chan error, 1)
 	finished.Add(2)
 	go func() {
 		defer finished.Done()
-		runtime.LockOSThread()
-		defer runtime.UnlockOSThread()
-		if err := winapi.InitMTA(); err != nil {
-			ready <- err
-			return
-		}
-		defer winapi.Uninit()
-		if err := uiaInit(); err != nil {
-			ready <- err
-			return
-		}
-		defer uiaClose()
-		ready <- nil
 		ticker := time.NewTicker(100 * time.Millisecond)
 		defer ticker.Stop()
 		for {
@@ -127,16 +109,11 @@ func Start(hotkey string, onHotkey func()) error {
 		hookThread = windows.GetCurrentThreadId()
 		runHooks(onHotkey, ready)
 	}()
-	var failed error
-	for range 2 {
-		if err := <-ready; err != nil && failed == nil {
-			failed = err
-		}
-	}
-	if failed != nil {
+	err := <-ready
+	if err != nil {
 		Close()
 	}
-	return failed
+	return err
 }
 
 func Close() {
@@ -151,38 +128,20 @@ func Close() {
 	quit = nil
 }
 
-// stillFocused reports whether t's window is in front and the focus has not
-// moved to another verified field or to something that certainly takes no
-// text. Anything in between (an autocomplete suggestion under the mouse, a
-// stale page document) is tolerated: the caret is usually still in place.
+// stillFocused reports whether t's window is in front and the text service
+// still reports the same focus. A busy application that does not answer in
+// time keeps its target.
 func stillFocused(t *target) bool {
 	if w, _, _ := getForeground.Call(); w != t.window {
 		return false
 	}
-	if t.tip != 0 {
-		// A busy application that does not answer in time keeps its target.
-		state, ok := tipSend(t.tip, tipQuery, "")
-		return !ok || state == t.tipState
-	}
-	var focused *winapi.Object
-	if winapi.Failed(engine.Call(autoFocused, uintptr(unsafe.Pointer(&focused)))) || focused == nil {
-		return t.id == nil
-	}
-	defer focused.Release()
-	editor := findEditor(focused)
-	if editor == nil {
-		return refusal(focused) == ""
-	}
-	defer editor.Release()
-	return t.id == nil || slices.Equal(runtimeID(editor), t.id)
+	state, ok := tipSend(t.tip, tipQuery, "")
+	return !ok || state == t.state
 }
 
-// Acquire locks the focused field of another process. When the XVoice text
-// service runs in that thread, TSF says whether the focus is an editable text
-// context and the field is edited through it. Otherwise a field UI Automation
-// confirms is tracked by identity, and unless the focus is certainly not a
-// text field, the foreground window is assumed to have one and only the window
-// is tracked.
+// Acquire locks the focused text field of another process. Only the text
+// service can tell a text field from anything else and write into it, so
+// without it nothing is acquired.
 func Acquire() (Target, error) {
 	var t *target
 	var err error
@@ -194,35 +153,27 @@ func Acquire() (Target, error) {
 			err = errors.New("请先点击其他应用的输入框")
 			return
 		}
-		t = &target{window: window, done: make(chan struct{})}
-		if tip := findTip(window); tip != 0 {
-			switch state, _ := tipSend(tip, tipQuery, ""); state & 3 {
-			case 1:
-				t.tip, t.tipState = tip, state
-			case 2:
-				t, err = nil, errors.New("当前输入框是只读的")
-				return
+		service := findTip(window)
+		if service == 0 {
+			if !tip.Check().Installed {
+				err = errors.New("请先在设置里安装输入法服务")
+			} else {
+				// The service creates its window on a thread's first text focus.
+				err = errors.New("当前焦点不是输入框")
 			}
-		}
-		t.anchor, t.anchored = systemCaret(window)
-		var focused *winapi.Object
-		if winapi.Failed(engine.Call(autoFocused, uintptr(unsafe.Pointer(&focused)))) || focused == nil {
 			return
 		}
-		defer focused.Release()
-		if editor := findEditor(focused); editor != nil {
-			defer editor.Release()
-			t.id = runtimeID(editor)
-			if !t.anchored {
-				t.anchor, t.anchored = caretRect(editor)
-			}
-		} else if t.tip != 0 {
-			// TSF knows better what has the focus; UIA still spots passwords.
-			if isPassword(focused) {
-				t, err = nil, errors.New("不支持在密码框中输入")
-			}
-		} else if reason := refusal(focused); reason != "" {
-			t, err = nil, errors.New(reason)
+		state, ok := tipSend(service, tipQuery, "")
+		switch {
+		case !ok:
+			err = errors.New("目标程序没有响应")
+		case state&3 == 0:
+			err = errors.New("当前焦点不是输入框")
+		case state&3 == 2:
+			err = errors.New("当前输入框不能输入")
+		default:
+			t = &target{window: window, tip: service, state: state, done: make(chan struct{})}
+			t.anchor, t.anchored = systemCaret(window)
 		}
 	})
 	if t == nil {
@@ -230,13 +181,12 @@ func Acquire() (Target, error) {
 	}
 	stopActive("已切换到新的输入")
 	mu.Lock()
-	t.token = generation.Add(1)
 	active = t
 	mu.Unlock()
 	return t, nil
 }
 
-// systemCaret covers classic Win32 edits that maintain a system caret.
+// systemCaret is where the application says its caret is, for placing the bar.
 func systemCaret(window uintptr) (image.Rectangle, bool) {
 	info, ok := threadInfo(window)
 	if !ok || info.CaretW == 0 || info.Caret.Bottom <= info.Caret.Top {
@@ -259,28 +209,14 @@ func (t *target) Reason() string {
 
 func (t *target) Anchor() (image.Rectangle, bool) { return t.anchor, t.anchored }
 
-// Release ends the target; text still composed through the text service is
-// committed so that it stays in the field.
+// Release ends the target and commits the composition so that it stays in
+// the field.
 func (t *target) Release() {
-	if t.tip != 0 {
-		do(func() { tipSend(t.tip, tipCommit, "") })
-	}
+	do(func() { tipSend(t.tip, tipCommit, "") })
 	stopIf(t, "已停止")
 }
 
-// SendInput events carry tag|token so the keyboard hook can drop any that are
-// still queued after this target stopped.
-const inputTag uintptr = 0x5846 << 48
-
-type keyInput struct {
-	Kind        uint32
-	_           uint32
-	VK, Scan    uint16
-	Flags, Time uint32
-	Extra       uintptr
-	_           [8]byte
-}
-
+// Type replaces the last erase characters of the composition with text.
 func (t *target) Type(erase int, text string) error {
 	var err error
 	do(func() {
@@ -289,33 +225,13 @@ func (t *target) Type(erase int, text string) error {
 			err = errors.New("输入框已失去焦点")
 			return
 		}
-		chars := utf16.Encode([]rune(text))
-		if len(chars) == 0 && erase == 0 {
+		if erase == 0 && text == "" {
 			return
 		}
-		if t.tip != 0 {
-			t.composed = append(t.composed[:max(0, len(t.composed)-erase)], []rune(text)...)
-			if queued, _ := tipSend(t.tip, tipCompose, string(t.composed)); queued != 1 {
-				stopIf(t, "文字输入失败")
-				err = errors.New("输入法服务没有响应")
-			}
-			return
-		}
-		input := make([]keyInput, 0, (len(chars)+erase)*2)
-		for range erase {
-			input = append(input,
-				keyInput{Kind: 1, VK: 0x08, Extra: inputTag | uintptr(t.token)},
-				keyInput{Kind: 1, VK: 0x08, Flags: 2, Extra: inputTag | uintptr(t.token)})
-		}
-		for _, c := range chars {
-			// KEYEVENTF_UNICODE, then | KEYEVENTF_KEYUP
-			input = append(input,
-				keyInput{Kind: 1, Scan: c, Flags: 4, Extra: inputTag | uintptr(t.token)},
-				keyInput{Kind: 1, Scan: c, Flags: 6, Extra: inputTag | uintptr(t.token)})
-		}
-		if n, _, _ := sendInput.Call(uintptr(len(input)), uintptr(unsafe.Pointer(&input[0])), unsafe.Sizeof(input[0])); int(n) != len(input) {
+		t.composed = append(t.composed[:max(0, len(t.composed)-erase)], []rune(text)...)
+		if queued, _ := tipSend(t.tip, tipCompose, string(t.composed)); queued != 1 {
 			stopIf(t, "文字输入失败")
-			err = errors.New("SendInput 被拒绝：目标程序可能以管理员身份运行")
+			err = errors.New("输入法服务没有响应")
 		}
 	})
 	return err

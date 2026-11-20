@@ -18,7 +18,7 @@ var ErrUnsupported = errors.New("当前平台尚未实现外部输入框写入")
 // (Done closes) as soon as focus, the foreground window or the keyboard says
 // the user moved on; Type after that is refused, never misdirected.
 type Target interface {
-	// Type presses Backspace erase times, then types text.
+	// Type replaces the last erase characters it wrote with text.
 	Type(erase int, text string) error
 	// Anchor is the caret rectangle in screen pixels, or the field's bounds
 	// when the caret cannot be located; ok is false if neither is known.

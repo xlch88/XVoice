@@ -13,8 +13,7 @@ import (
 // loads into applications next to the keyboard IME. On every thread that gets
 // a text focus it keeps a message-only window; commands sent to that window
 // run on the application's UI thread, where the service edits the field as a
-// composition. Without it (not installed, or an application TSF does not
-// reach) typing falls back to SendInput.
+// composition. It is the only way text is written.
 
 var (
 	findWindowEx       = user32.NewProc("FindWindowExW")
@@ -24,7 +23,7 @@ var (
 
 // Commands of the text service window, see tip/xvoice_tip.cpp.
 const (
-	tipQuery   = 1 // -> generation<<2 | state (1 editable, 2 read-only, 0 no text focus)
+	tipQuery   = 1 // -> generation<<2 | state (1 editable, 2 not writable, 0 no text focus)
 	tipCompose = 2 // show text as the composition
 	tipCommit  = 3 // replace the composition with text, if any, and end it
 )

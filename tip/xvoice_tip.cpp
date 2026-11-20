@@ -10,9 +10,11 @@
 // processes after an update, so the protocol only ever grows.
 //
 // Protocol 1 (COPYDATASTRUCT.dwData, lpData = UTF-16 text without terminator):
-//   QUERY   -> (generation << 2) | state; state 1 editable, 2 read-only,
-//              0 when the thread has no text focus. generation changes
-//              whenever the focus moves or someone else ends our composition.
+//   QUERY   -> (generation << 2) | state; state 1 editable, 2 not writable
+//              (read-only, or the application disabled keyboard input as it
+//              does for passwords), 0 when the thread has no text focus.
+//              generation changes whenever the focus moves or someone else
+//              ends our composition.
 //   COMPOSE -> show text as the composition, starting one if needed.
 //   COMMIT  -> replace the composition with text (if any) and end it.
 // COMPOSE and COMMIT return 1 when the edit was queued.
@@ -202,8 +204,10 @@ public:
             if (!context) return 0;
             TF_STATUS status = {};
             context->GetStatus(&status);
+            bool writable = !(status.dwDynamicFlags & TF_SD_READONLY) && !Flagged(context, GUID_COMPARTMENT_KEYBOARD_DISABLED) &&
+                            !Flagged(context, GUID_COMPARTMENT_EMPTYCONTEXT);
             context->Release();
-            return ((LRESULT)(generation & 0x1fffffff) << 2) | ((status.dwDynamicFlags & TF_SD_READONLY) ? 2 : 1);
+            return ((LRESULT)(generation & 0x1fffffff) << 2) | (writable ? 1 : 2);
         }
         if (!context) return 0;
         LRESULT queued = 0;
@@ -242,6 +246,24 @@ private:
         focus->GetTop(&context);
         focus->Release();
         return context;
+    }
+
+    // Flagged reads a context compartment the application sets, such as
+    // keyboard-disabled on password fields.
+    static bool Flagged(ITfContext *context, REFGUID compartment) {
+        ITfCompartmentMgr *compartments = nullptr;
+        if (FAILED(context->QueryInterface(IID_ITfCompartmentMgr, (void **)&compartments))) return false;
+        ITfCompartment *item = nullptr;
+        VARIANT value;
+        VariantInit(&value);
+        if (SUCCEEDED(compartments->GetCompartment(compartment, &item))) {
+            item->GetValue(&value);
+            item->Release();
+        }
+        compartments->Release();
+        bool set = value.vt == VT_I4 && value.lVal != 0;
+        VariantClear(&value);
+        return set;
     }
 
     void EndComposition(TfEditCookie ec) {

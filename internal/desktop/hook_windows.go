@@ -21,6 +21,7 @@ var (
 	getMessage     = user32.NewProc("GetMessageW")
 	getAsyncKey    = user32.NewProc("GetAsyncKeyState")
 	setTimer       = user32.NewProc("SetTimer")
+	sendInput      = user32.NewProc("SendInput")
 )
 
 const (
@@ -166,6 +167,15 @@ func modifier(vk uint32) uint32 {
 // maskTag marks sendMask's events so the hook lets them through untouched.
 const maskTag uintptr = 0x584d << 48
 
+type keyInput struct {
+	Kind        uint32
+	_           uint32
+	VK, Scan    uint16
+	Flags, Time uint32
+	Extra       uintptr
+	_           [8]byte
+}
+
 // sendMask taps a key no keyboard has. Because the hotkey's own key is
 // swallowed, Windows would otherwise see the modifiers pressed and released
 // alone and react to that: Alt opens the menu bar, Win the Start menu,
@@ -181,13 +191,6 @@ var keyboardCallback = syscall.NewCallback(func(code, message uintptr, event *ke
 		return next(code, message, event)
 	}
 	down := message == 0x100 || message == 0x104 // WM_KEYDOWN, WM_SYSKEYDOWN
-	if event.Extra&^0xffffffffffff == inputTag {
-		// Our own SendInput: drop key-downs that belong to a stopped target.
-		if t := current(); down && (t == nil || uint64(event.Extra&0xffffffffffff) != t.token) {
-			return 1
-		}
-		return next(code, message, event)
-	}
 	vk := modifier(event.VK)
 	if vk > 255 {
 		return next(code, message, event)
