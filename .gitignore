@@ -1,4 +1,5 @@
 dist/
+tip/obj/
 *.exe
 *.exe~
 *.test

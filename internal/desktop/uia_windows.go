@@ -102,16 +102,21 @@ func editable(element *winapi.Object) bool {
 	return known && !ro
 }
 
+func isPassword(element *winapi.Object) bool {
+	var password int32
+	element.Call(elemPassword, uintptr(unsafe.Pointer(&password)))
+	return password != 0
+}
+
 // refusal says why focused certainly cannot take text, or returns "". Many
 // apps expose little or nothing (Weixin 4 leaves UIA focus on its window,
 // Chromium answers the first query before its tree exists), so anything not
 // positively identified as something else gets the benefit of the doubt.
 func refusal(focused *winapi.Object) string {
-	var password, kind int32
-	focused.Call(elemPassword, uintptr(unsafe.Pointer(&password)))
-	if password != 0 {
+	if isPassword(focused) {
 		return "不支持在密码框中输入"
 	}
+	var kind int32
 	focused.Call(elemControlType, uintptr(unsafe.Pointer(&kind)))
 	switch kind {
 	// Button, CheckBox, Hyperlink, MenuBar, RadioButton, ScrollBar, Slider,
