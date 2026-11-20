@@ -21,7 +21,6 @@ const (
 	autoControlWalker = 14 // ::get_ControlViewWalker
 	elemRuntimeID     = 4  // IUIAutomationElement::GetRuntimeId
 	elemPattern       = 16 // ::GetCurrentPattern
-	elemProcessID     = 20 // ::get_CurrentProcessId
 	elemControlType   = 21 // ::get_CurrentControlType
 	elemEnabled       = 28 // ::get_CurrentIsEnabled
 	elemPassword      = 35 // ::get_CurrentIsPassword
@@ -52,8 +51,43 @@ const (
 
 var engine *winapi.Object // Created and used on the MTA worker; free-threaded.
 
-// editable reports whether element accepts typed text: an enabled, non-password
-// edit/document/combo whose value or text is not read-only.
+// readOnly asks element's value and text providers whether it takes typed
+// text; known is false when neither says.
+func readOnly(element *winapi.Object) (readOnly, known bool) {
+	var pattern *winapi.Object
+	if !winapi.Failed(element.Call(elemPattern, patternValue, uintptr(unsafe.Pointer(&pattern)))) && pattern != nil {
+		var value int32
+		hr := pattern.Call(valueReadOnly, uintptr(unsafe.Pointer(&value)))
+		pattern.Release()
+		if !winapi.Failed(hr) {
+			if value == 0 {
+				return false, true
+			}
+			readOnly, known = true, true
+		}
+	}
+	pattern = nil
+	if winapi.Failed(element.Call(elemPattern, patternText, uintptr(unsafe.Pointer(&pattern)))) || pattern == nil {
+		return readOnly, known
+	}
+	var document *winapi.Object
+	hr := pattern.Call(textDocument, uintptr(unsafe.Pointer(&document)))
+	pattern.Release()
+	if winapi.Failed(hr) || document == nil {
+		return readOnly, known
+	}
+	defer document.Release()
+	var value winapi.Variant
+	defer value.Clear()
+	// VT_BOOL for the document as a whole; mixed or unsupported says nothing.
+	if winapi.Failed(document.Call(rangeAttribute, attrReadOnly, uintptr(unsafe.Pointer(&value)))) || value.VT != 11 {
+		return readOnly, known
+	}
+	return uintptr(value.Ptr)&0xffff != 0, true
+}
+
+// editable reports whether element certainly accepts typed text: an enabled,
+// non-password edit/document/combo whose value or text is not read-only.
 func editable(element *winapi.Object) bool {
 	var enabled, password, kind int32
 	if winapi.Failed(element.Call(elemEnabled, uintptr(unsafe.Pointer(&enabled)))) || enabled == 0 ||
@@ -64,35 +98,42 @@ func editable(element *winapi.Object) bool {
 	if kind != typeEdit && kind != typeDocument && kind != typeCombo {
 		return false
 	}
-	var pattern *winapi.Object
-	if !winapi.Failed(element.Call(elemPattern, patternValue, uintptr(unsafe.Pointer(&pattern)))) && pattern != nil {
-		var readOnly int32
-		hr := pattern.Call(valueReadOnly, uintptr(unsafe.Pointer(&readOnly)))
-		pattern.Release()
-		if !winapi.Failed(hr) && readOnly == 0 {
-			return true
-		}
-	}
-	pattern = nil
-	if winapi.Failed(element.Call(elemPattern, patternText, uintptr(unsafe.Pointer(&pattern)))) || pattern == nil {
-		return false
-	}
-	var document *winapi.Object
-	hr := pattern.Call(textDocument, uintptr(unsafe.Pointer(&document)))
-	pattern.Release()
-	if winapi.Failed(hr) || document == nil {
-		return false
-	}
-	defer document.Release()
-	var value winapi.Variant
-	defer value.Clear()
-	// VT_BOOL false: the document as a whole is writable.
-	return !winapi.Failed(document.Call(rangeAttribute, attrReadOnly, uintptr(unsafe.Pointer(&value)))) && value.VT == 11 && uintptr(value.Ptr)&0xffff == 0
+	ro, known := readOnly(element)
+	return known && !ro
 }
 
-// findEditor returns the editable element at or a few wrapper levels above
-// focused (browsers and Electron often focus a child of the real editor).
-// The result is owned by the caller.
+// refusal says why focused certainly cannot take text, or returns "". Many
+// apps expose little or nothing (Weixin 4 leaves UIA focus on its window,
+// Chromium answers the first query before its tree exists), so anything not
+// positively identified as something else gets the benefit of the doubt.
+func refusal(focused *winapi.Object) string {
+	var password, kind int32
+	focused.Call(elemPassword, uintptr(unsafe.Pointer(&password)))
+	if password != 0 {
+		return "不支持在密码框中输入"
+	}
+	focused.Call(elemControlType, uintptr(unsafe.Pointer(&kind)))
+	switch kind {
+	// Button, CheckBox, Hyperlink, MenuBar, RadioButton, ScrollBar, Slider,
+	// Tab, TabItem, ToolBar, SplitButton, HeaderItem, TitleBar. List, menu,
+	// tree and grid items are left out: an autocomplete suggestion under the
+	// mouse is reported as focused (aria-activedescendant) while the caret
+	// stays in the input, and typing into a spreadsheet cell edits it.
+	case 50000, 50002, 50005, 50010, 50013, 50014, 50015, 50018, 50019, 50021, 50031, 50035, 50037:
+		return "当前焦点不是输入框"
+	case typeEdit, typeCombo:
+		// Not documents: Chromium at times reports the read-only page as
+		// focused while the caret is in one of its fields.
+		if ro, known := readOnly(focused); known && ro {
+			return "当前输入框是只读的"
+		}
+	}
+	return ""
+}
+
+// findEditor returns the element at or a few wrapper levels above focused
+// (browsers and Electron often focus a child of the real editor) that
+// certainly accepts text. The result is owned by the caller.
 func findEditor(focused *winapi.Object) *winapi.Object {
 	if focused == nil {
 		return nil
@@ -141,15 +182,6 @@ func runtimeID(element *winapi.Object) []int32 {
 		id = append(id, v)
 	}
 	return id
-}
-
-func editorID(focused *winapi.Object) []int32 {
-	editor := findEditor(focused)
-	if editor == nil {
-		return nil
-	}
-	defer editor.Release()
-	return runtimeID(editor)
 }
 
 // caretRect asks the text provider where the selection is; empty selections

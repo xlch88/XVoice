@@ -28,7 +28,7 @@ var (
 
 type target struct {
 	token    uint64
-	id       []int32
+	id       []int32 // Runtime ID of the verified field; nil tracks only window.
 	window   uintptr
 	anchor   image.Rectangle
 	anchored bool
@@ -148,50 +148,57 @@ func Close() {
 	quit = nil
 }
 
+// stillFocused reports whether t's window is in front and the focus has not
+// moved to another verified field or to something that certainly takes no
+// text. Anything in between (an autocomplete suggestion under the mouse, a
+// stale page document) is tolerated: the caret is usually still in place.
 func stillFocused(t *target) bool {
 	if w, _, _ := getForeground.Call(); w != t.window {
 		return false
 	}
 	var focused *winapi.Object
 	if winapi.Failed(engine.Call(autoFocused, uintptr(unsafe.Pointer(&focused)))) || focused == nil {
-		return false
+		return t.id == nil
 	}
 	defer focused.Release()
-	return slices.Equal(editorID(focused), t.id)
+	editor := findEditor(focused)
+	if editor == nil {
+		return refusal(focused) == ""
+	}
+	defer editor.Release()
+	return t.id == nil || slices.Equal(runtimeID(editor), t.id)
 }
 
-// Acquire locks the currently focused editable field of another process.
+// Acquire locks the focused field of another process. A field UI Automation
+// confirms is tracked by identity; otherwise, unless the focus is certainly
+// not a text field, the foreground window is assumed to have one and only the
+// window is tracked.
 func Acquire() (Target, error) {
 	var t *target
 	var err error
 	do(func() {
-		var focused *winapi.Object
-		if winapi.Failed(engine.Call(autoFocused, uintptr(unsafe.Pointer(&focused)))) || focused == nil {
-			err = errors.New("无法取得当前焦点")
-			return
-		}
-		defer focused.Release()
+		window, _, _ := getForeground.Call()
 		var pid uint32
-		focused.Call(elemProcessID, uintptr(unsafe.Pointer(&pid)))
-		if pid == windows.GetCurrentProcessId() {
+		getThreadProcess.Call(window, uintptr(unsafe.Pointer(&pid)))
+		if window == 0 || pid == windows.GetCurrentProcessId() {
 			err = errors.New("请先点击其他应用的输入框")
 			return
 		}
-		editor := findEditor(focused)
-		if editor == nil {
-			err = errors.New("当前焦点不是可编辑的输入框")
-			return
-		}
-		defer editor.Release()
-		window, _, _ := getForeground.Call()
-		t = &target{id: runtimeID(editor), window: window, done: make(chan struct{})}
-		if len(t.id) == 0 {
-			t, err = nil, errors.New("无法识别当前输入框")
-			return
-		}
+		t = &target{window: window, done: make(chan struct{})}
 		t.anchor, t.anchored = systemCaret(window)
-		if !t.anchored {
-			t.anchor, t.anchored = caretRect(editor)
+		var focused *winapi.Object
+		if winapi.Failed(engine.Call(autoFocused, uintptr(unsafe.Pointer(&focused)))) || focused == nil {
+			return
+		}
+		defer focused.Release()
+		if editor := findEditor(focused); editor != nil {
+			defer editor.Release()
+			t.id = runtimeID(editor)
+			if !t.anchored {
+				t.anchor, t.anchored = caretRect(editor)
+			}
+		} else if reason := refusal(focused); reason != "" {
+			t, err = nil, errors.New(reason)
 		}
 	})
 	if t == nil {
