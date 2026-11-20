@@ -121,6 +121,7 @@ const (
 	wmChoices       = wmApp + 3 // wParam: index of the field whose choices loaded.
 	wmShowSettings  = wmApp + 4 // Also posted by a second instance.
 	wmHotkey        = wmApp + 5 // A recorded hotkey is waiting in shared.
+	wmTipDone       = wmApp + 6 // An elevated text service install or uninstall finished.
 	wmTray          = wmApp + 10
 
 	wsPopup       = 0x80000000
@@ -407,6 +408,10 @@ func mainProc(hwnd, message, wParam, lParam uintptr) uintptr {
 		return 0
 	case wmHotkey:
 		hotkeyRecorded()
+		return 0
+	case wmTipDone:
+		tipBusy = false
+		refreshTip()
 		return 0
 	case wmTray:
 		switch lParam & 0xffff {

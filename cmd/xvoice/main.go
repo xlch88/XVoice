@@ -18,6 +18,7 @@ import (
 	"github.com/xlch88/XVoice/internal/config"
 	"github.com/xlch88/XVoice/internal/desktop"
 	"github.com/xlch88/XVoice/internal/session"
+	"github.com/xlch88/XVoice/internal/tip"
 	"github.com/xlch88/XVoice/internal/ui"
 )
 
@@ -25,6 +26,12 @@ import (
 var version = "dev"
 
 func main() {
+	switch {
+	case slices.Contains(os.Args[1:], tip.InstallArg):
+		elevated(tip.Install)
+	case slices.Contains(os.Args[1:], tip.UninstallArg):
+		elevated(tip.Uninstall)
+	}
 	if !ui.SingleInstance() {
 		return
 	}
@@ -81,4 +88,14 @@ func main() {
 		ui.Alert(err.Error())
 		os.Exit(1)
 	}
+}
+
+// elevated runs an install step the settings window started as administrator,
+// then exits; the exit code tells the settings window whether it worked.
+func elevated(step func() error) {
+	if err := step(); err != nil {
+		ui.Alert("输入法服务：" + err.Error())
+		os.Exit(1)
+	}
+	os.Exit(0)
 }

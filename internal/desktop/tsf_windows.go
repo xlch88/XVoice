@@ -5,6 +5,8 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+
+	"github.com/xlch88/XVoice/internal/tip"
 )
 
 // The XVoice text service (tip/xvoice_tip.cpp) is a TSF speech TIP that TSF
@@ -17,7 +19,7 @@ import (
 var (
 	findWindowEx       = user32.NewProc("FindWindowExW")
 	sendMessageTimeout = user32.NewProc("SendMessageTimeoutW")
-	tipClass           = windows.StringToUTF16Ptr("XVoiceTipWindow")
+	tipClass           = windows.StringToUTF16Ptr(tip.WindowClass)
 )
 
 // Commands of the text service window, see tip/xvoice_tip.cpp.

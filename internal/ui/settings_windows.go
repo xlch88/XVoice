@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"unsafe"
 
@@ -9,15 +10,18 @@ import (
 
 	"github.com/xlch88/XVoice/internal/config"
 	"github.com/xlch88/XVoice/internal/desktop"
+	"github.com/xlch88/XVoice/internal/tip"
 )
 
 // The settings window: the form from settingsFields on the left, rendered by
 // one loop, and a recognition test on the right.
 
 const (
-	idTest  = 90
-	idAbout = 91
-	idField = 100 // Plus the field's index.
+	idTest         = 90
+	idAbout        = 91
+	idTipInstall   = 92
+	idTipUninstall = 93
+	idField        = 100 // Plus the field's index.
 
 	settingsStyle = wsCaption | wsSysMenu | wsMinimizeBox
 )
@@ -36,6 +40,11 @@ var (
 	rows          []row
 	footnote      uintptr
 	aboutButton   uintptr
+	tipHeading    uintptr
+	tipStatus     uintptr
+	tipInstall    uintptr
+	tipUninstall  uintptr
+	tipBusy       bool // An elevated install or uninstall is running.
 	divider       uintptr
 	testHeading   uintptr
 	testButton    uintptr
@@ -53,6 +62,7 @@ var (
 		level   float64
 		status  string
 		running bool
+		tipFail string // Why the last install or uninstall failed.
 	}
 )
 
@@ -96,6 +106,11 @@ func createSettings() {
 	}
 	footnote = child("STATIC", "更改立即保存，从下一次听写开始生效。", 0, 0, 0)
 	aboutButton = child("BUTTON", "关于 "+opts.Version, wsTabStop, 0, idAbout)
+	tipHeading = child("STATIC", "输入法服务", 0, 0, 0)
+	tipStatus = child("STATIC", "", 0, 0, 0)
+	tipInstall = child("BUTTON", "安装", wsTabStop, 0, idTipInstall)
+	tipUninstall = child("BUTTON", "卸载", wsTabStop, 0, idTipUninstall)
+	refreshTip()
 	divider = child("STATIC", "", 0x11, 0, 0) // SS_ETCHEDVERT
 	testHeading = child("STATIC", "测试", 0, 0, 0)
 	testButton = child("BUTTON", "开始测试", wsTabStop, 0, idTest)
@@ -136,6 +151,14 @@ func layoutSettings() {
 		place(r.combo, 120, y, 250, height, settingsFonts.text)
 		y += 34
 	}
+	y += 8
+	place(tipHeading, 20, y, 350, 22, settingsFonts.bold)
+	y += 28
+	place(tipStatus, 20, y, 350, 40, settingsFonts.text)
+	y += 44
+	place(tipInstall, 20, y, 96, 28, settingsFonts.text)
+	place(tipUninstall, 124, y, 96, 28, settingsFonts.text)
+	y += 40
 	place(footnote, 20, y+4, 250, 20, settingsFonts.text)
 	place(aboutButton, 274, y, 96, 28, settingsFonts.text)
 	bottom := y + 36
@@ -278,6 +301,65 @@ func refreshEnabled() {
 	}
 }
 
+// refreshTip shows whether the text service is installed and running.
+func refreshTip() {
+	s := tip.Check()
+	shared.Lock()
+	failure := shared.tipFail
+	shared.Unlock()
+	var text string
+	switch {
+	case tipBusy:
+		text = "正在处理，请在 Windows 弹出的窗口中确认…"
+	case !s.Supported:
+		text = "这个版本没有附带输入法服务。"
+	case !s.Installed:
+		text = "未安装。安装后通过输入法框架写入文字，判断输入框更准，也不用切换输入法。"
+	case !s.Current:
+		text = fmt.Sprintf("已安装其他版本，正在 %d 个线程中运行。点“更新”换成这个版本。", s.Active)
+	default:
+		text = fmt.Sprintf("已安装，正在 %d 个线程中运行。", s.Active)
+	}
+	if failure != "" && !tipBusy {
+		text = "操作没有完成：" + failure + "\n" + text
+	}
+	setCaption(tipStatus, text)
+	label := "安装"
+	if s.Current {
+		label = "重新安装"
+	} else if s.Installed {
+		label = "更新"
+	}
+	setCaption(tipInstall, label)
+	enabled := func(on bool) uintptr {
+		if on {
+			return 1
+		}
+		return 0
+	}
+	enableWindow.Call(tipInstall, enabled(s.Supported && !tipBusy))
+	enableWindow.Call(tipUninstall, enabled(s.Installed && !tipBusy))
+}
+
+// runTip runs this executable elevated with arg (tip.InstallArg or
+// tip.UninstallArg) and refreshes the status when it is done.
+func runTip(arg string) {
+	tipBusy = true
+	shared.Lock()
+	shared.tipFail = ""
+	shared.Unlock()
+	refreshTip()
+	go func() {
+		err := tip.Elevate(arg)
+		shared.Lock()
+		if err != nil {
+			shared.tipFail = err.Error()
+		}
+		shared.Unlock()
+		postMessage.Call(mainWnd, wmTipDone, 0, 0)
+	}()
+}
+
 func startTest() {
 	ctx, cancel := context.WithCancel(context.Background())
 	testCancel = cancel
@@ -340,6 +422,10 @@ func settingsProc(hwnd, message, wParam, lParam uintptr) uintptr {
 		switch {
 		case id == idAbout:
 			openAbout()
+		case id == idTipInstall:
+			runTip(tip.InstallArg)
+		case id == idTipUninstall:
+			runTip(tip.UninstallArg)
 		case id == idTest:
 			if testCancel != nil {
 				stopTest()
@@ -361,6 +447,7 @@ func settingsProc(hwnd, message, wParam, lParam uintptr) uintptr {
 	case wmActivate:
 		if wParam&0xffff != 0 {
 			reloadChoices()
+			refreshTip()
 		} else {
 			cancelRecording()
 		}
