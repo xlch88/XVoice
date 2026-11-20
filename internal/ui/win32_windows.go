@@ -73,6 +73,8 @@ var (
 	getSysColorBrush   = user32.NewProc("GetSysColorBrush")
 	getDpiForWindow    = user32.NewProc("GetDpiForWindow")
 	adjustWindowRect   = user32.NewProc("AdjustWindowRectExForDpi")
+	setWinEventHook    = user32.NewProc("SetWinEventHook")
+	getClassName       = user32.NewProc("GetClassNameW")
 	getDpiForMonitor   = shcore.NewProc("GetDpiForMonitor")
 	initCommonControls = comctl32.NewProc("InitCommonControlsEx")
 	createFont         = gdi32.NewProc("CreateFontW")

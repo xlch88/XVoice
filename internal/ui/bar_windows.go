@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"syscall"
 	"unicode/utf8"
 	"unsafe"
 
@@ -15,7 +16,7 @@ import (
 // clicking it leaves the caret in the destination app, like Win+H.
 
 const (
-	barW, barH = 460, 84 // At 96 DPI, like every layout number below.
+	barW, barH = 230, 84 // At 96 DPI, like every layout number below.
 	hideTimer  = 1
 	hideDelay  = 5000
 )
@@ -34,7 +35,8 @@ var (
 	barText    string // Last transcript; survives the dictation ending.
 	barHover   int
 	barPressed int
-	barClosed  bool // The user closed the bar mid-dictation; stay hidden until it has ended.
+	barClosed  bool    // The user closed the bar mid-dictation; stay hidden until it has ended.
+	barOwner   uintptr // Window the bar is about; 0 when shown from the tray.
 	barFonts   struct{ status, text, icon uintptr }
 )
 
@@ -46,6 +48,35 @@ func createBar() {
 	round := int32(2) // DWMWCP_ROUND: Windows 11 rounded corners and shadow.
 	dwmSetAttribute.Call(barWnd, 33, uintptr(unsafe.Pointer(&round)), 4)
 	setBarDPI(96)
+	// EVENT_SYSTEM_FOREGROUND, delivered to this thread's message loop
+	// (WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS).
+	setWinEventHook.Call(3, 3, 0, syscall.NewCallback(barForeground), 0, 0, 0x2)
+}
+
+// barForeground puts the bar away as soon as the user switches away from the
+// window it is about. The event's own window is not trusted (apps report
+// helper windows, see desktop's foreground hook); the real foreground is
+// checked instead. The taskbar does not count, so the tray icon still works.
+func barForeground(_, _, _, _, _, _, _ uintptr) uintptr {
+	foreground, _, _ := getForeground.Call()
+	if barOwner == 0 || foreground == 0 || foreground == barOwner || !visible(barWnd) {
+		return 0
+	}
+	var class [64]uint16
+	getClassName.Call(foreground, uintptr(unsafe.Pointer(&class[0])), uintptr(len(class)))
+	switch windows.UTF16ToString(class[:]) {
+	case "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "NotifyIconOverflowWindow", "TopLevelWindowForOverflowXamlIsland":
+		return 0
+	}
+	closeBar()
+	return 0
+}
+
+// closeBar ends the dictation and hides the bar until the next one starts.
+func closeBar() {
+	barClosed = barState.Phase != session.Idle
+	go opts.Stop()
+	showWindow.Call(barWnd, swHide)
 }
 
 // setBarDPI sizes the bar and its fonts for the monitor it is on.
@@ -63,11 +94,12 @@ func setBarDPI(dpi int) {
 	setWindowPos.Call(barWnd, 0, 0, 0, uintptr(px(barW)), uintptr(px(barH)), 0x2|0x4|0x10) // NOMOVE | NOZORDER | NOACTIVATE
 }
 
-// Button rectangles in 96-DPI client coordinates.
+// Button rectangles in 96-DPI client coordinates; the buttons are stacked at
+// the right edge to leave the narrow bar room for text.
 var (
 	micCenter   = image.Pt(42, 42)
-	settingsBox = image.Rect(384, 28, 412, 56)
-	closeBox    = image.Rect(418, 28, 446, 56)
+	closeBox    = image.Rect(194, 12, 222, 40)
+	settingsBox = image.Rect(194, 44, 222, 72)
 )
 
 func scaled(r image.Rectangle) windows.Rect {
@@ -123,6 +155,7 @@ func placeBar(s session.State) {
 func showBarIdle() {
 	if !visible(barWnd) {
 		placeBar(session.State{})
+		barOwner = 0
 	}
 	showWindow.Call(barWnd, swShowNoActive)
 	invalidateRect.Call(barWnd, 0, 0)
@@ -136,6 +169,7 @@ func applyState(s session.State) {
 		}
 		barText = ""
 		placeBar(s)
+		barOwner, _, _ = getForeground.Call()
 	}
 	if was != session.Idle && s.Phase == session.Idle && cfg.Sound != "off" {
 		play(stopSound)
@@ -153,6 +187,7 @@ func applyState(s session.State) {
 		// Also surfaces "focus is not a text field" when nothing started.
 		if !visible(barWnd) {
 			placeBar(s)
+			barOwner, _, _ = getForeground.Call()
 		}
 		setTimer.Call(barWnd, hideTimer, hideDelay, 0)
 	} else {
@@ -241,7 +276,7 @@ func paintBar(hdc uintptr) {
 
 	selectObject.Call(hdc, barFonts.status)
 	setTextColor.Call(hdc, rgb(0x9a, 0x9a, 0x9a))
-	statusRect := scaled(image.Rect(78, 12, 374, 30))
+	statusRect := scaled(image.Rect(78, 12, 188, 30))
 	drawText.Call(hdc, uintptr(unsafe.Pointer(str(status))), ^uintptr(0), uintptr(unsafe.Pointer(&statusRect)), 0x20|0x8000|0x800) // SINGLELINE | END_ELLIPSIS | NOPREFIX
 
 	text, color := barText, rgb(0xf0, 0xf0, 0xf0)
@@ -250,7 +285,7 @@ func paintBar(hdc uintptr) {
 	}
 	selectObject.Call(hdc, barFonts.text)
 	setTextColor.Call(hdc, color)
-	textRect := scaled(image.Rect(78, 32, 374, 76))
+	textRect := scaled(image.Rect(78, 32, 188, 76))
 	text = tail(hdc, text, textRect)
 	drawText.Call(hdc, uintptr(unsafe.Pointer(str(text))), ^uintptr(0), uintptr(unsafe.Pointer(&textRect)), 0x10|0x800)
 }
@@ -303,9 +338,7 @@ func barProc(hwnd, message, wParam, lParam uintptr) uintptr {
 		case hitSettings, hitClose:
 			// Both end the dictation and put the bar away; opening settings
 			// would take the focus from the text field anyway.
-			barClosed = barState.Phase != session.Idle
-			go opts.Stop()
-			showWindow.Call(hwnd, swHide)
+			closeBar()
 			if hit == hitSettings {
 				showSettings()
 			}
