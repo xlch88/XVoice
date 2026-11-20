@@ -1,15 +1,24 @@
 // XVoice text service: a TSF speech-category TIP that TSF activates next to
 // whatever keyboard IME is in use. It does nothing until xvoice.exe talks to
 // it: for each thread that gets a text focus it creates a message-only window
-// ("XVoiceTipWindow") that accepts WM_COPYDATA commands on that UI thread.
+// ("XVoiceTipWindow", window text = protocol version) that accepts
+// WM_COPYDATA commands on that UI thread.
 //
-// Commands (COPYDATASTRUCT.dwData, lpData = UTF-16 text without terminator):
+// It runs inside every GUI process for as long as they live, so it is kept to
+// the bare mechanism: all policy is in xvoice.exe, nothing here blocks, and
+// every edit is queued asynchronously. Old copies stay loaded in long-running
+// processes after an update, so the protocol only ever grows.
+//
+// Protocol 1 (COPYDATASTRUCT.dwData, lpData = UTF-16 text without terminator):
 //   QUERY   -> (generation << 2) | state; state 1 editable, 2 read-only,
 //              0 when the thread has no text focus. generation changes
 //              whenever the focus moves or someone else ends our composition.
 //   COMPOSE -> show text as the composition, starting one if needed.
 //   COMMIT  -> replace the composition with text (if any) and end it.
 // COMPOSE and COMMIT return 1 when the edit was queued.
+//
+// WM_COPYDATA from lower-integrity processes stays blocked (UIPI): letting it
+// through would let any program type into elevated windows.
 #include <windows.h>
 #include <msctf.h>
 #include <olectl.h>
@@ -24,6 +33,8 @@ const CLSID CLSID_XVoiceTip = {0xb7e3a1c4, 0x5d2f, 0x4a8b, {0x9c, 0x61, 0x3e, 0x
 const GUID PROFILE_XVoiceTip = {0xd2a64f18, 0x7b3c, 0x4e95, {0xa1, 0xd7, 0x5c, 0x8e, 0x2f, 0x0b, 0x6a, 0x43}};
 const wchar_t DESCRIPTION[] = L"XVoice";
 const wchar_t WINDOW_CLASS[] = L"XVoiceTipWindow";
+const wchar_t PROTOCOL[] = L"1";
+const DWORD MAX_TEXT_BYTES = 1 << 20; // xvoice.exe sends one dictation at most.
 const LANGID LANGUAGES[] = {0x0804, 0x0409}; // zh-CN, en-US
 const GUID CATEGORIES[] = {GUID_TFCAT_TIP_SPEECH, GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT, GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT};
 
@@ -197,13 +208,21 @@ public:
         if (!context) return 0;
         LRESULT queued = 0;
         if (command == COMPOSE || command == COMMIT) {
-            EditSession *session = new EditSession(this, context, (Command)command, text);
-            HRESULT result = S_OK;
-            queued = SUCCEEDED(context->RequestEditSession(client, session, TF_ES_ASYNCDONTCARE | TF_ES_READWRITE, &result)) ? 1 : 0;
-            session->Release();
+            EditSession *session = new (std::nothrow) EditSession(this, context, (Command)command, text);
+            if (session) {
+                HRESULT result = S_OK;
+                // Always queued: never edit inside a message another process waits on.
+                queued = SUCCEEDED(context->RequestEditSession(client, session, TF_ES_ASYNC | TF_ES_READWRITE, &result)) ? 1 : 0;
+                session->Release();
+            }
         }
         context->Release();
         return queued;
+    }
+
+    ~TextService() {
+        if (window) DestroyWindow(window);
+        DropComposition();
     }
 
 private:
@@ -249,21 +268,22 @@ private:
         wc.hInstance = dllInstance;
         wc.lpszClassName = WINDOW_CLASS;
         RegisterClassExW(&wc); // Fails harmlessly once registered.
-        window = CreateWindowExW(0, WINDOW_CLASS, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, dllInstance, nullptr);
-        if (!window) return;
-        SetWindowLongPtrW(window, GWLP_USERDATA, (LONG_PTR)this);
-        // Let xvoice.exe reach elevated applications too.
-        ChangeWindowMessageFilterEx(window, WM_COPYDATA, MSGFLT_ALLOW, nullptr);
+        window = CreateWindowExW(0, WINDOW_CLASS, PROTOCOL, 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, dllInstance, nullptr);
+        if (window) SetWindowLongPtrW(window, GWLP_USERDATA, (LONG_PTR)this);
     }
 
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
         if (message == WM_COPYDATA) {
             auto *service = (TextService *)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
             auto *data = (const COPYDATASTRUCT *)lParam;
-            if (!service || !data) return 0;
-            std::wstring text;
-            if (data->lpData && data->cbData >= sizeof(wchar_t)) text.assign((const wchar_t *)data->lpData, data->cbData / sizeof(wchar_t));
-            return service->Handle(data->dwData, text);
+            if (!service || !data || data->cbData > MAX_TEXT_BYTES) return 0;
+            try {
+                std::wstring text;
+                if (data->lpData && data->cbData >= sizeof(wchar_t)) text.assign((const wchar_t *)data->lpData, data->cbData / sizeof(wchar_t));
+                return service->Handle(data->dwData, text);
+            } catch (...) {
+                return 0; // Out of memory: refuse the command, never take the application down.
+            }
         }
         return DefWindowProcW(hwnd, message, wParam, lParam);
     }
@@ -309,11 +329,13 @@ public:
 
 Factory factory;
 
-std::wstring ClsidKey() {
+std::wstring ClsidText() {
     wchar_t clsid[40];
     StringFromGUID2(CLSID_XVoiceTip, clsid, 40);
-    return std::wstring(L"Software\\Classes\\CLSID\\") + clsid;
+    return clsid;
 }
+
+std::wstring ClsidKey() { return L"Software\\Classes\\CLSID\\" + ClsidText(); }
 
 } // namespace
 
@@ -385,5 +407,7 @@ STDAPI DllUnregisterServer() {
         profiles->Release();
     }
     RegDeleteTreeW(HKEY_LOCAL_MACHINE, ClsidKey().c_str());
+    // UnregisterProfile leaves the empty TIP key behind.
+    RegDeleteTreeW(HKEY_LOCAL_MACHINE, (L"Software\\Microsoft\\CTF\\TIP\\" + ClsidText()).c_str());
     return S_OK;
 }
