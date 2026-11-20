@@ -2,3 +2,6 @@
 * text=auto eol=lf
 *.png binary
 *.syso binary
+*.dll binary
+# cmd.exe misparses some batch files with LF line endings.
+*.cmd eol=crlf
